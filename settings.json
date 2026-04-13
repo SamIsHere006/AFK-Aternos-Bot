@@ -6,10 +6,10 @@
     "type": "offline"
   },
   "server": {
-    "ip": "catla.aternos.host",
+    "ip": "Samishere006.aternos.me",
     "port": 57425,
     "version": "",
-    "try-creative": false
+    "try-creative": true
   },
   "position": {
     "enabled": true,
@@ -29,7 +29,7 @@
     "chat-messages": {
       "enabled": true,
       "repeat": true,
-      "repeat-delay": 120,
+      "repeat-delay": 300,
       "messages": [
         "I'm a regular player",
         "SumBum Dalla hai!",
