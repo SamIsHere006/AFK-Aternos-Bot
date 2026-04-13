@@ -1,12 +1,12 @@
 {
-  "name": "SumBum",
+  "name": "AFK Bot",
   "bot-account": {
-    "username": "SumBum",
+    "username": "Slobot00",
     "password": "",
     "type": "offline"
   },
   "server": {
-    "ip": " Samishere006.aternos.me",
+    "ip": "Samishere006.aternos.me:57425",
     "port": 57425,
     "version": "",
     "try-creative": false
@@ -32,7 +32,7 @@
       "repeat-delay": 120,
       "messages": [
         "I'm a regular player",
-        "SumBum Ka Bot",
+        "Subscribe to Slobos!",
         "I like to play Minecraft!"
       ]
     },
