@@ -6,7 +6,7 @@
     "type": "offline"
   },
   "server": {
-    "ip": "Samishere006.aternos.me:57425",
+    "ip": "Samishere006.aternos.me",
     "port": 57425,
     "version": "",
     "try-creative": false
