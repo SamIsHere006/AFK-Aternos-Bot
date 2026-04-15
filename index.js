@@ -1398,32 +1398,68 @@ function initializeModules(bot, mcData, defaultMove) {
   addLog("[Modules] Initializing all modules...");
 
   // ---------- AUTO AUTH (REACTIVE) ----------
-  if (config.utils["auto-auth"] && config.utils["auto-auth"].enabled) {
-    const password = config.utils["auto-auth"].password;
-    let authHandled = false;
+  const autoAuthConfig = (config.utils && config.utils["auto-auth"]) || {};
+  const authModeRaw = String(autoAuthConfig.mode || "").trim().toLowerCase();
+  let authMode = "none";
+
+  if (authModeRaw) {
+    if (["none", "login", "register_then_login"].includes(authModeRaw)) {
+      authMode = authModeRaw;
+    } else {
+      addLog(
+        `[Auth] Invalid auto-auth mode "${autoAuthConfig.mode}". Supported: none, login, register_then_login. Auto-auth disabled.`,
+      );
+    }
+  } else if (autoAuthConfig.enabled) {
+    // Backward-compatible fallback for older configs that only used "enabled"
+    authMode = "register_then_login";
+  }
+
+  const password = String(autoAuthConfig.password || "").trim();
+  if (authMode !== "none" && !password) {
+    addLog(
+      `[Auth] Auto-auth mode "${authMode}" is enabled but no password is configured. Auto-auth disabled.`,
+    );
+    authMode = "none";
+  }
+
+  if (authMode === "none") {
+    addLog("[Auth] Auto-auth disabled (mode: none).");
+  } else {
+    let registerSent = false;
+    let loginSent = false;
 
     const tryAuth = (type) => {
-      if (authHandled || !bot || !botState.connected) return;
-      authHandled = true;
+      if (!bot || !botState.connected) return;
+
       if (type === "register") {
+        if (authMode !== "register_then_login" || registerSent) return;
         bot.chat(`/register ${password} ${password}`);
+        registerSent = true;
         addLog("[Auth] Detected register prompt - sent /register");
-      } else {
-        bot.chat(`/login ${password}`);
-        addLog("[Auth] Detected login prompt - sent /login");
+        return;
       }
+
+      if (loginSent) return;
+      bot.chat(`/login ${password}`);
+      loginSent = true;
+      addLog("[Auth] Detected login prompt - sent /login");
     };
 
     bot.on("messagestr", (message) => {
-      if (authHandled) return;
       const msg = message.toLowerCase();
+
       if (
-        msg.includes("/register") ||
-        msg.includes("register ") ||
-        msg.includes("지정된 비밀번호")
+        authMode === "register_then_login" &&
+        (msg.includes("/register") ||
+          msg.includes("register ") ||
+          msg.includes("지정된 비밀번호"))
       ) {
         tryAuth("register");
-      } else if (
+        return;
+      }
+
+      if (
         msg.includes("/login") ||
         msg.includes("login ") ||
         msg.includes("로그인")
@@ -1434,12 +1470,12 @@ function initializeModules(bot, mcData, defaultMove) {
 
     // Failsafe: if no prompt after 10s, try login anyway
     setTimeout(() => {
-      if (!authHandled && bot && botState.connected) {
+      if (!loginSent && bot && botState.connected) {
         addLog(
           "[Auth] No prompt detected after 10s, sending /login as failsafe",
         );
         bot.chat(`/login ${password}`);
-        authHandled = true;
+        loginSent = true;
       }
     }, 10000);
   }
