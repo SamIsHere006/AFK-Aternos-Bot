@@ -989,6 +989,8 @@ app.post("/stop", (req, res) => {
   if (!botRunning) return res.json({ success: false, msg: "Already stopped" });
 
   botRunning = false;
+  clearBotTimeouts("manual stop");
+  isConnecting = false;
 
   if (bot) {
     bot.end();
@@ -1135,16 +1137,30 @@ let activeIntervals = [];
 let reconnectTimeoutId = null;
 let connectionTimeoutId = null;
 let isReconnecting = false;
+let isConnecting = false;
+let connectionAttempt = 0;
 
-function clearBotTimeouts() {
+function clearReconnectTimeout(reason = "replaced") {
   if (reconnectTimeoutId) {
     clearTimeout(reconnectTimeoutId);
     reconnectTimeoutId = null;
+    if (isReconnecting) {
+      addLog(`[Bot] Reconnect canceled (${reason})`);
+    }
+    isReconnecting = false;
   }
+}
+
+function clearConnectionTimeout() {
   if (connectionTimeoutId) {
     clearTimeout(connectionTimeoutId);
     connectionTimeoutId = null;
   }
+}
+
+function clearBotTimeouts(reason = "cleared") {
+  clearReconnectTimeout(reason);
+  clearConnectionTimeout();
 }
 
 // FIX: Discord rate limiting - track last send time
@@ -1185,13 +1201,24 @@ function getReconnectDelay() {
 }
 
 function createBot() {
-  if (isReconnecting) {
-    addLog("[Bot] Already reconnecting, skipping...");
+  if (isConnecting) {
+    addLog("[Bot] Connection already in progress, skipping duplicate createBot()");
     return;
   }
 
+  if (botState.connected && bot) {
+    addLog("[Bot] Already connected, skipping duplicate createBot()");
+    return;
+  }
+
+  isConnecting = true;
+  const attemptId = ++connectionAttempt;
+
   // Cleanup previous bot properly to avoid ghost bots
   if (bot) {
+    addLog(
+      `[Bot] [Attempt ${attemptId}] Closing previous connection before reconnect`,
+    );
     clearAllIntervals();
     try {
       bot.removeAllListeners();
@@ -1202,8 +1229,10 @@ function createBot() {
     bot = null;
   }
 
-  addLog(`[Bot] Creating bot instance...`);
-  addLog(`[Bot] Connecting to ${config.server.ip}:${config.server.port}`);
+  addLog(`[Bot] [Attempt ${attemptId}] Creating bot instance...`);
+  addLog(
+    `[Bot] [Attempt ${attemptId}] Connecting to ${config.server.ip}:${config.server.port}`,
+  );
 
   try {
     // FIX: use version:false to auto-detect server version so the bot can join any server.
@@ -1212,7 +1241,7 @@ function createBot() {
       config.server.version && config.server.version.trim() !== ""
         ? config.server.version
         : false;
-    bot = mineflayer.createBot({
+    const createdBot = mineflayer.createBot({
       username: config["bot-account"].username,
       password: config["bot-account"].password || undefined,
       auth: config["bot-account"].type,
@@ -1222,20 +1251,25 @@ function createBot() {
       hideErrors: false,
       checkTimeoutInterval: 600000,
     });
+    bot = createdBot;
 
-    bot.loadPlugin(pathfinder);
+    createdBot.loadPlugin(pathfinder);
 
     // FIX: connection timeout - end the old bot before reconnecting to avoid ghost bots
-    clearBotTimeouts();
+    clearBotTimeouts("new connection attempt");
     connectionTimeoutId = setTimeout(() => {
+      if (bot !== createdBot) return;
       if (!botState.connected) {
-        addLog("[Bot] Connection timeout - no spawn received");
+        addLog(
+          `[Bot] [Attempt ${attemptId}] Connection timeout - no spawn received`,
+        );
         try {
-          bot.removeAllListeners();
-          bot.end();
+          createdBot.removeAllListeners();
+          createdBot.end();
         } catch (e) {
           /* ignore */
         }
+        isConnecting = false;
         bot = null;
         scheduleReconnect();
       }
@@ -1244,18 +1278,20 @@ function createBot() {
     // FIX: guard against spawn firing twice (can happen on some servers)
     let spawnHandled = false;
 
-    bot.once("spawn", () => {
+    createdBot.once("spawn", () => {
+      if (bot !== createdBot) return;
       if (spawnHandled) return;
       spawnHandled = true;
 
-      clearBotTimeouts();
+      clearBotTimeouts("spawned");
       botState.connected = true;
       botState.lastActivity = Date.now();
       botState.reconnectAttempts = 0;
+      isConnecting = false;
       isReconnecting = false;
 
       addLog(
-        `[Bot] [+] Successfully spawned on server! (Version: ${bot.version})`,
+        `[Bot] [Attempt ${attemptId}] [+] Successfully spawned on server! (Version: ${createdBot.version})`,
       );
       if (
         config.discord &&
@@ -1269,24 +1305,24 @@ function createBot() {
       }
 
       // FIX: use bot.version (auto-detected) instead of config value so minecraft-data always matches
-      const mcData = require("minecraft-data")(bot.version);
-      const defaultMove = new Movements(bot, mcData);
+      const mcData = require("minecraft-data")(createdBot.version);
+      const defaultMove = new Movements(createdBot, mcData);
       defaultMove.allowFreeMotion = false;
       defaultMove.canDig = false;
       defaultMove.liquidCost = 1000;
       defaultMove.fallDamageCost = 1000;
 
-      initializeModules(bot, mcData, defaultMove);
+      initializeModules(createdBot, mcData, defaultMove);
 
       // Attempt creative mode (only works if bot has OP and enabled in settings)
       setTimeout(() => {
-        if (bot && botState.connected && config.server["try-creative"]) {
-          bot.chat("/gamemode creative");
+        if (bot === createdBot && botState.connected && config.server["try-creative"]) {
+          createdBot.chat("/gamemode creative");
           addLog("[INFO] Attempted to set creative mode (requires OP)");
         }
       }, 3000);
 
-      bot.on("messagestr", (message) => {
+      createdBot.on("messagestr", (message) => {
         if (
           message.includes("commands.gamemode.success.self") ||
           message.includes("Set own game mode to Creative Mode")
@@ -1298,11 +1334,12 @@ function createBot() {
 
     // FIX: 'kicked' fires before 'end'. Remove the scheduleReconnect from 'kicked'
     // so that 'end' is the single source of reconnect truth, preventing double-trigger.
-    bot.on("kicked", (reason) => {
+    createdBot.on("kicked", (reason) => {
+      if (bot !== createdBot) return;
       // FIX: stringify reason if it's an object to make it readable in logs
       const kickReason =
         typeof reason === "object" ? JSON.stringify(reason) : reason;
-      addLog(`[Bot] Kicked: ${kickReason}`);
+      addLog(`[Bot] [Attempt ${attemptId}] Kicked: ${kickReason}`);
       botState.connected = false;
       botState.errors.push({
         type: "kicked",
@@ -1322,6 +1359,11 @@ function createBot() {
         );
         botState.wasThrottled = true;
       }
+      if (reasonStr.includes("logged in from another location")) {
+        addLog(
+          "[Bot] Duplicate-login kick detected. This usually means another bot/process is using the same username.",
+        );
+      }
 
       if (
         config.discord &&
@@ -1334,11 +1376,14 @@ function createBot() {
     });
 
     // FIX: 'end' is the single reconnect trigger
-    bot.on("end", (reason) => {
-      addLog(`[Bot] Disconnected: ${reason || "Unknown reason"}`);
+    createdBot.on("end", (reason) => {
+      if (bot !== createdBot) return;
+      addLog(`[Bot] [Attempt ${attemptId}] Disconnected: ${reason || "Unknown reason"}`);
       botState.connected = false;
+      isConnecting = false;
       clearAllIntervals();
       spawnHandled = false; // reset for next connection
+      bot = null;
 
       if (
         config.discord &&
@@ -1355,24 +1400,26 @@ function createBot() {
       scheduleReconnect();
     });
 
-    bot.on("error", (err) => {
+    createdBot.on("error", (err) => {
+      if (bot !== createdBot) return;
       const msg = err.message || "";
-      addLog(`[Bot] Error: ${msg}`);
+      addLog(`[Bot] [Attempt ${attemptId}] Error: ${msg}`);
       botState.errors.push({ type: "error", message: msg, time: Date.now() });
       // Don't reconnect on error - let 'end' event handle it
     });
   } catch (err) {
+    isConnecting = false;
     addLog(`[Bot] Failed to create bot: ${err.message}`);
     scheduleReconnect();
   }
 }
 
 function scheduleReconnect() {
-  clearBotTimeouts();
+  clearConnectionTimeout();
 
   // FIX: don't stack reconnect if already waiting
   if (isReconnecting) {
-    addLog("[Bot] Reconnect already scheduled, skipping duplicate.");
+    addLog("[Bot] Reconnect already scheduled, skipping duplicate trigger.");
     return;
   }
 
@@ -1381,12 +1428,13 @@ function scheduleReconnect() {
 
   const delay = getReconnectDelay();
   addLog(
-    `[Bot] Reconnecting in ${delay / 1000}s (attempt #${botState.reconnectAttempts})`,
+    `[Bot] Reconnect scheduled in ${delay / 1000}s (attempt #${botState.reconnectAttempts})`,
   );
 
   reconnectTimeoutId = setTimeout(() => {
     reconnectTimeoutId = null;
     isReconnecting = false;
+    addLog("[Bot] Reconnect timer fired — starting new connection attempt");
     createBot();
   }, delay);
 }
