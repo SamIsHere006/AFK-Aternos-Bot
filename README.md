@@ -64,6 +64,19 @@ Set `utils.auto-auth.mode` to control whether the bot sends auth commands:
 }
 ```
 
+## 🧰 Troubleshooting
+
+### `lost connection: You logged in from another location`
+
+This means the same Minecraft username is connected from somewhere else at the same time.
+
+To fix:
+- Run only **one** AFK bot instance per account.
+- Check hosting process managers (Render restarts, PM2, nodemon, duplicate deploys) so they are not launching multiple bot processes.
+- Increase `utils.auto-reconnect-delay` in `settings.json` if your host/server is unstable and reconnects are too aggressive.
+
+Recent versions also log connection lifecycle events (connect/spawn/kick/end/reconnect scheduled/canceled) so you can see exactly when reconnects are triggered.
+
 ---
 
 ## ⚠️ Disclaimer
