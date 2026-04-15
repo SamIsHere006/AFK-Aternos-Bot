@@ -34,6 +34,36 @@ We have made setup super easy! Check out the guide below:
 *   **Status**: Visit the Render URL to see a status dashboard.
 *   **Chat**: The bot logs chat to the console.
 
+### Auto-auth configuration (`settings.json`)
+
+Set `utils.auto-auth.mode` to control whether the bot sends auth commands:
+
+* `none` (default) → never sends `/login` or `/register`
+* `login` → sends `/login <password>`
+* `register_then_login` → sends `/register <password> <password>` when prompted, and `/login <password>` when needed
+
+> If auth mode is `login` or `register_then_login`, `utils.auto-auth.password` must be set.
+
+#### Example: server **without** `/login` (online-mode)
+
+```json
+"auto-auth": {
+  "enabled": false,
+  "mode": "none",
+  "password": ""
+}
+```
+
+#### Example: server **with** `/login` (AuthMe/offline-mode)
+
+```json
+"auto-auth": {
+  "enabled": true,
+  "mode": "login",
+  "password": "yourAuthPassword"
+}
+```
+
 ---
 
 ## ⚠️ Disclaimer
